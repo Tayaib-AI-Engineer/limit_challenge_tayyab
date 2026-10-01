@@ -33,6 +33,35 @@ class Office(models.Model):
         return self.name
 
 
+class VehicleQuerySet(models.QuerySet):
+    def conflicts(self, *, vin=None, license_plate=None, exclude_pk=None):
+        """Names of the fields that would clash with an existing vehicle, in one query.
+
+        The VIN must be unique across all vehicles; the plate only among active ones
+        (mirroring the uniq_active_license_plate constraint). Values must already be
+        normalised. exclude_pk skips the vehicle being edited.
+        """
+        lookup = Q()
+        if vin:
+            lookup |= Q(vin=vin)
+        if license_plate:
+            lookup |= Q(license_plate=license_plate, active=True)
+        if not lookup:
+            return []
+
+        clashes = self.filter(lookup)
+        if exclude_pk is not None:
+            clashes = clashes.exclude(pk=exclude_pk)
+
+        found = set()
+        for other_vin, other_plate, other_active in clashes.values_list("vin", "license_plate", "active"):
+            if vin and other_vin == vin:
+                found.add("vin")
+            if license_plate and other_active and other_plate == license_plate:
+                found.add("license_plate")
+        return [field for field in ("vin", "license_plate") if field in found]
+
+
 class Vehicle(models.Model):
     vin = UpperCaseCharField(
         "VIN",
@@ -48,6 +77,8 @@ class Vehicle(models.Model):
     # PROTECT: an office can't be deleted while vehicles are assigned to it.
     office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="vehicles")
     active = models.BooleanField(default=True)
+
+    objects = VehicleQuerySet.as_manager()
 
     class Meta:
         constraints = [
