@@ -1,9 +1,12 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.core.validators import MinValueValidator
 from django.db import models
-from django.db.models import Q
+from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Subquery, Sum, Value
+from django.db.models.functions import Coalesce
 
+from .dates import one_year_before
 from .validators import (
     validate_license_plate,
     validate_model_year,
@@ -25,9 +28,52 @@ class UpperCaseCharField(models.CharField):
         return value.strip().upper() if isinstance(value, str) else value
 
 
+class OfficeQuerySet(models.QuerySet):
+    def with_summary(self, today):
+        """Annotate active_vehicle_count, maintenance_cost_last_year (records dated from
+        the same day last year up to today) and last_maintenance.
+
+        Each figure is a correlated subquery over its own table. Annotating Count and Sum
+        across office -> vehicles -> records in one GROUP BY repeats every vehicle once
+        per record and inflates the count (measured 5,444 instead of 200). Subqueries
+        can't fan out by construction, and need no outer GROUP BY.
+
+        Records count towards the vehicle's *current* office, including records of
+        inactive vehicles; only the vehicle count is limited to active vehicles.
+        """
+        active_vehicles = (
+            Vehicle.objects.filter(office=OuterRef("pk"), active=True)
+            .order_by()
+            .values("office")
+            .annotate(count=Count("pk"))
+            .values("count")
+        )
+        office_records = (
+            MaintenanceRecord.objects.filter(vehicle__office=OuterRef("pk")).order_by().values("vehicle__office")
+        )
+        cost_last_year = (
+            office_records.filter(date__range=(one_year_before(today), today))
+            .annotate(total=Sum("cost"))
+            .values("total")
+        )
+        latest_date = office_records.annotate(latest=Max("date")).values("latest")
+
+        return self.annotate(
+            active_vehicle_count=Coalesce(Subquery(active_vehicles), 0),
+            maintenance_cost_last_year=Coalesce(
+                Subquery(cost_last_year),
+                Value(Decimal("0")),
+                output_field=models.DecimalField(max_digits=14, decimal_places=2),
+            ),
+            last_maintenance=Subquery(latest_date),
+        )
+
+
 class Office(models.Model):
     name = models.CharField(max_length=100, unique=True)
     city = models.CharField(max_length=100)
+
+    objects = OfficeQuerySet.as_manager()
 
     def __str__(self):
         return self.name
@@ -60,6 +106,41 @@ class VehicleQuerySet(models.QuerySet):
             if license_plate and other_active and other_plate == license_plate:
                 found.add("license_plate")
         return [field for field in ("vin", "license_plate") if field in found]
+
+    def with_detail(self):
+        """Prefetch the office and the full maintenance history, each record with its
+        mechanic: 2 queries however long the history is (503 without this, for a
+        vehicle with 500 records).
+
+        select_related can only JOIN single-valued relations (vehicle -> office,
+        record -> mechanic), so the one-to-many history needs prefetch_related. The
+        custom Prefetch queryset folds the mechanic into the records query (2 queries
+        rather than 3) and sorts newest first in SQL.
+        """
+        history = MaintenanceRecord.objects.select_related("mechanic").order_by("-date", "-id")
+        return self.select_related("office").prefetch_related(Prefetch("maintenance_records", queryset=history))
+
+    def with_last_maintenance(self):
+        latest = MaintenanceRecord.objects.filter(vehicle=OuterRef("pk")).order_by("-date").values("date")[:1]
+        return self.annotate(last_maintenance=Subquery(latest))
+
+    def needing_maintenance(self, today):
+        """Active vehicles never serviced, or last serviced more than 365 days ago,
+        oldest maintenance first (never-serviced vehicles first of all).
+
+        "No record in the last 365 days" is a NOT EXISTS probe that stops at the first
+        recent record via the (vehicle, date) index, instead of aggregating every
+        record of every vehicle and discarding most of them in HAVING (3-5x slower).
+        A record exactly 365 days old does not make a vehicle overdue.
+        """
+        recent = MaintenanceRecord.objects.filter(vehicle=OuterRef("pk"), date__gte=today - timedelta(days=365))
+        return (
+            self.filter(active=True)
+            .filter(~Exists(recent))
+            .with_last_maintenance()
+            # Explicit: SQLite sorts NULLs first ascending, PostgreSQL sorts them last.
+            .order_by(F("last_maintenance").asc(nulls_first=True), "id")
+        )
 
 
 class Vehicle(models.Model):
@@ -97,6 +178,23 @@ class Vehicle(models.Model):
         return f"{self.vin} ({self.license_plate})"
 
 
+class MechanicQuerySet(models.QuerySet):
+    def with_workload(self, today):
+        """Annotate maintenance_count and total_cost for work done this calendar year up
+        to today, busiest first. Mechanics with no work this year are kept, with 0.
+
+        A plain JOIN + GROUP BY is safe here: there is only one one-to-many relation
+        (mechanic -> records), so no row fan-out. The date range sits in the aggregate
+        FILTER rather than in .filter(): a WHERE clause would turn the LEFT JOIN into an
+        inner join and drop idle mechanics.
+        """
+        this_year = Q(maintenance_records__date__range=(today.replace(month=1, day=1), today))
+        return self.annotate(
+            maintenance_count=Count("maintenance_records", filter=this_year),
+            total_cost=Sum("maintenance_records__cost", filter=this_year, default=Decimal("0")),
+        ).order_by("-maintenance_count", "-total_cost", "name", "id")
+
+
 class Mechanic(models.Model):
     name = models.CharField(max_length=100)
     certification_number = UpperCaseCharField(
@@ -105,6 +203,8 @@ class Mechanic(models.Model):
         error_messages={"unique": "A mechanic with this certification number already exists."},
     )
     active = models.BooleanField(default=True)
+
+    objects = MechanicQuerySet.as_manager()
 
     def __str__(self):
         return f"{self.name} ({self.certification_number})"
