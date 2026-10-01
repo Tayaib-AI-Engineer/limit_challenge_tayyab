@@ -24,6 +24,35 @@ On startup the container applies migrations, then runs the Django dev server.
 The `backend/` folder is mounted into the container, so code edits reload the server
 automatically and the database file is the same one a local virtualenv run would use.
 
+### Load sample data
+
+```bash
+docker compose exec backend python manage.py seed_fleet
+```
+
+This creates 12 offices, 40 mechanics, 2,000 vehicles and 50,000 maintenance records
+spread over the last three years, in about 4 seconds on an empty database. Replacing
+existing data with `--clear` takes about 15 seconds under Docker Desktop, because the
+database file sits in the bind-mounted folder where disk writes are slower (natively it
+stays around 4 seconds). It finishes by printing the vehicles and URLs worth a look. The
+data includes a case for each endpoint:
+
+- an office with no vehicles
+- active vehicles never serviced, and overdue vehicles, including one last serviced
+  exactly 365 days ago (not overdue) and one 366 days ago (overdue)
+- inactive vehicles reusing an active vehicle's license plate
+- inactive mechanics, and active mechanics with no work this year
+- one vehicle with 500 maintenance records
+
+The same `--seed` on the same day always produces the same data. The command refuses to
+run on a database that already has fleet data unless you pass `--clear`.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--offices`, `--mechanics`, `--vehicles`, `--records` | 12, 40, 2000, 50000 | How much to create |
+| `--seed` | 42 | Random seed |
+| `--clear` | off | Delete all existing fleet data first |
+
 ### Everyday commands
 
 Run these from `backend_focused/`.
@@ -31,6 +60,7 @@ Run these from `backend_focused/`.
 | Task | Command |
 |---|---|
 | Follow the logs | `docker compose logs -f backend` |
+| Replace the data with a fresh sample | `docker compose exec backend python manage.py seed_fleet --clear` |
 | Run the tests | `docker compose exec backend python manage.py test` |
 | Run the tests when the stack is stopped | `docker compose run --rm backend python manage.py test` |
 | Create migrations after a model change | `docker compose exec backend python manage.py makemigrations` |
@@ -66,6 +96,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
+python manage.py seed_fleet        # optional sample data
 python manage.py runserver 0.0.0.0:8000
 ```
 
