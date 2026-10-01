@@ -5,6 +5,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from .filters import VehicleFilter
 from .models import MaintenanceRecord, Mechanic, Office, Vehicle
 from .serializers import (
     AssignOfficeSerializer,
@@ -45,8 +46,11 @@ class OfficeViewSet(viewsets.ModelViewSet):
 
 
 class VehicleViewSet(viewsets.ModelViewSet):
+    """Vehicle CRUD. The list endpoint is also the vehicle search: see VehicleFilter."""
+
     queryset = Vehicle.objects.select_related("office").order_by("id")
     serializer_class = VehicleSerializer
+    filterset_class = VehicleFilter
     ordering_fields = ["id", "vin", "license_plate", "make", "model", "year"]
 
     def get_queryset(self):
