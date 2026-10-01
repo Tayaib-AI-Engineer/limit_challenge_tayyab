@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -18,14 +19,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+# Defaults keep `manage.py runserver` working out of the box; Docker and any
+# real deployment override them through environment variables.
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure--i^5bam1xi!k^$hyanp@-1kgey0aciz8=i55n@-pn5^!9jl8_c'
+SECRET_KEY = os.environ.get(
+    'DJANGO_SECRET_KEY',
+    'django-insecure--i^5bam1xi!k^$hyanp@-1kgey0aciz8=i55n@-pn5^!9jl8_c',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 
 # Application definition
@@ -38,7 +44,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'corsheaders',
+    'django_filters',
     'rest_framework',
+    'drf_spectacular',
     'fleet',
 ]
 
@@ -126,17 +134,36 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10,
+    # Lives in fleet/pagination.py, not fleet/views.py: referencing a class in a
+    # module that itself reads api_settings at import time is a circular import.
+    'DEFAULT_PAGINATION_CLASS': 'fleet.pagination.StandardPagination',
+    'PAGE_SIZE': 20,
     'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.OrderingFilter',
     ],
+    # JSONRenderer must come first: with only BrowsableAPIRenderer, JSON
+    # clients get 406 and axios' default Accept header gets HTML with no data.
     'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # Maps ProtectedError / IntegrityError to 409 instead of an HTML 500.
+    'EXCEPTION_HANDLER': 'fleet.exceptions.api_exception_handler',
+    # Money is rendered as a JSON number (81250.5), matching the README example.
+    # All arithmetic stays in Decimal inside the database.
+    'COERCE_DECIMAL_TO_STRING': False,
+    'TEST_REQUEST_DEFAULT_FORMAT': 'json',
 }
 
-JSON_UNDERSCOREIZE = {
-    'no_underscore_before_number': True,
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Fleet Maintenance API',
+    'DESCRIPTION': 'Offices, vehicles, mechanics and maintenance records.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
 }
 
+# Development convenience. In production, list origins explicitly with
+# CORS_ALLOWED_ORIGINS instead.
 CORS_ALLOW_ALL_ORIGINS = True

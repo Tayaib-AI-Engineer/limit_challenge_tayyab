@@ -1,5 +1,8 @@
 # Fleet Maintenance API Take-home Challenge
 
+> **Submission:** how to run, test and use the API is in [backend/README.md](backend/README.md).
+> The challenge brief below is unchanged.
+
 Build a REST API for managing a fleet of vehicles and their maintenance history.
 
 Use Python, Django and Django REST Framework.

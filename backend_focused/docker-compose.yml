@@ -1,0 +1,13 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      # Host port is overridable when 8000 is taken: BACKEND_PORT=8001 docker compose up -d
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      DJANGO_DEBUG: "1"
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0"
+    # Bind-mount the source so runserver auto-reloads on edits; db.sqlite3 lives
+    # in ./backend and is shared with a local virtualenv setup.
+    volumes:
+      - ./backend:/app
