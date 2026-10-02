@@ -7,6 +7,8 @@ services:
     environment:
       DJANGO_DEBUG: "1"
       DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0"
+      # JWT is required by default; DJANGO_API_AUTH=0 docker compose up -d opens the API.
+      DJANGO_API_AUTH: "${DJANGO_API_AUTH:-1}"
     # Bind-mount the source so runserver auto-reloads on edits; db.sqlite3 lives
     # in ./backend and is shared with a local virtualenv setup.
     volumes:

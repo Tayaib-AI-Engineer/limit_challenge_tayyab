@@ -144,10 +144,15 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# The brief says the API needs no authentication; JWT is its optional bonus, so it is on
+# by default and DJANGO_API_AUTH=0 opens every endpoint. Any other value keeps it on:
+# a typo must not open the API.
+API_AUTH_REQUIRED = os.environ.get('DJANGO_API_AUTH', '1') != '0'
+
 REST_FRAMEWORK = {
-    # Secure by default: every endpoint needs a user, except those that opt out: token
-    # issuing, and the schema and docs (drf-spectacular serves them with AllowAny unless
-    # SPECTACULAR_SETTINGS['SERVE_PERMISSIONS'] says otherwise).
+    # Secure by default: every endpoint needs a user (unless API_AUTH_REQUIRED is off),
+    # except those that opt out: token issuing, and the schema and docs (drf-spectacular
+    # serves them with AllowAny unless SPECTACULAR_SETTINGS['SERVE_PERMISSIONS'] says otherwise).
     # JWTAuthentication comes first so anonymous requests get 401 with
     # `WWW-Authenticate: Bearer`; sessions keep the browsable API usable after login.
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -155,7 +160,7 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'fleet.permissions.IsAuthenticatedIfRequired',
     ],
     # Lives in fleet/pagination.py, not fleet/views.py: referencing a class in a
     # module that itself reads api_settings at import time is a circular import.
@@ -191,7 +196,8 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': (
         'Offices, vehicles, mechanics and maintenance records.\n\n'
         'Get a token from `POST /api/auth/token/`, then click **Authorize** and paste the '
-        '`access` value. `python manage.py seed_fleet` creates the user `demo` / `demo-password`.'
+        '`access` value. `python manage.py seed_fleet` creates the user `demo` / `demo-password`. '
+        'No token is needed when the server runs with `DJANGO_API_AUTH=0`.'
     ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,

@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -8,6 +9,8 @@ from .helpers import fast_password_hashing
 PASSWORD = "s3cret-pass"
 
 
+# Pinned, so these tests hold even when the suite runs with DJANGO_API_AUTH=0.
+@override_settings(API_AUTH_REQUIRED=True)
 @fast_password_hashing
 class AuthenticationTests(APITestCase):
     @classmethod
@@ -64,3 +67,16 @@ class AuthenticationTests(APITestCase):
         response = self.client.get(reverse("vehicle-list"), HTTP_ACCEPT="text/html")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+
+@override_settings(API_AUTH_REQUIRED=False)
+class AuthenticationSwitchedOffTests(APITestCase):
+    """DJANGO_API_AUTH=0: the API as the brief describes it, without authentication."""
+
+    def test_endpoints_are_open_without_a_token(self):
+        created = self.client.post(reverse("office-list"), {"name": "Denver", "city": "Denver"})
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED)
+
+        for url in [reverse("api-root"), reverse("vehicle-list"), reverse("office-summary")]:
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, status.HTTP_200_OK)

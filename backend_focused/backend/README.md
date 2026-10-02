@@ -3,7 +3,8 @@
 Django 5.2 + Django REST Framework 3.17 API for offices, vehicles, mechanics and
 maintenance records. Data is stored in SQLite (`backend/db.sqlite3`). Endpoints require a
 JWT (the challenge's optional bonus); the sample data includes the login `demo` /
-`demo-password`.
+`demo-password`. To call the API without a token, as the brief describes it, start the
+server with `DJANGO_API_AUTH=0`.
 
 **Contents:** [Quick start](#quick-start) · [Run with Docker](#run-with-docker-recommended) ·
 [Run without Docker](#run-without-docker) · [Authentication](#authentication) ·
@@ -30,6 +31,10 @@ Then, to call the API, which requires a token:
 3. Click **Authorize** and paste the `access` token into the **jwtAuth** box.
 
 [Authentication](#authentication) has the details and a curl version.
+
+To skip tokens altogether, start it with authentication off instead:
+`DJANGO_API_AUTH=0 docker compose up -d`. Then plain
+`curl http://localhost:8000/api/offices/summary/` works.
 
 ## Run with Docker (recommended)
 
@@ -121,6 +126,7 @@ The `DJANGO_*` variables are read by Django: set them under `environment:` in
 | `DJANGO_DEBUG` | `1` | `0` turns debug mode off |
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` (Compose adds `0.0.0.0`) | Comma-separated host names Django will serve |
 | `DJANGO_SECRET_KEY` | public development key | **Required when `DJANGO_DEBUG=0`**: the server refuses to start with the default key, because API tokens are signed with it |
+| `DJANGO_API_AUTH` | `1` | `0` turns authentication off: every endpoint is open, as in the brief. Any other value keeps it on |
 
 The frontend reads `NEXT_PUBLIC_API_BASE_URL`, which defaults to
 `http://localhost:8000/api`. Change it if you change `BACKEND_PORT`.
@@ -147,6 +153,11 @@ Run the tests with `python manage.py test`.
 Every endpoint requires an authenticated user, except token issuing, the API docs and
 the schema. Run `seed_fleet` for the `demo` login, or create your own with
 `createsuperuser`.
+
+The challenge doesn't require authentication, so it can be switched off: start the server
+with `DJANGO_API_AUTH=0` (`DJANGO_API_AUTH=0 docker compose up -d`, or
+`DJANGO_API_AUTH=0 python manage.py runserver`) and every endpoint answers without a
+token. Only `0` switches it off; any other value keeps it on, so a typo can't open the API.
 
 **In Swagger** (http://localhost:8000/api/docs/):
 1. Expand `POST /api/auth/token/` and click **Try it out**.
@@ -184,7 +195,7 @@ hasn't been run yet (it creates `demo`), or the server is still starting.
 
 ## API
 
-Every endpoint is under `/api/`, requires a token (see [Authentication](#authentication))
+Every endpoint is under `/api/`, requires a token unless `DJANGO_API_AUTH=0` (see [Authentication](#authentication))
 and is documented, with a "Try it out" button, at http://localhost:8000/api/docs/.
 
 | Method | Path | What it does |
@@ -301,7 +312,7 @@ includes the inactive-mechanic rule, and the office being read-only on existing 
 ## Tests
 
 ```bash
-docker compose exec backend python manage.py test                                  # all 93 tests, ~3 s
+docker compose exec backend python manage.py test                                  # all 95 tests, ~3 s
 docker compose exec backend python manage.py test fleet.tests.test_vehicle_search_api  # one module
 ```
 
@@ -317,9 +328,9 @@ Tests use an in-memory SQLite database and never touch `db.sqlite3`.
 | `test_vehicle_actions_api` | Vehicle detail, maintenance history, assign-office, duplicate check (including inactive vehicles) |
 | `test_vehicle_search_api` | Every search parameter, the "same maintenance record" rule, and invalid or oversized parameters |
 | `test_seed_command` | Seed sizes, planted scenarios, model validity of generated data, reproducibility, demo login |
-| `test_auth_api` | 401 without a token, token issuing and refresh, invalid tokens, public docs, session login |
+| `test_auth_api` | 401 without a token, token issuing and refresh, invalid tokens, public docs, session login, open endpoints with authentication switched off |
 | `test_models_admin` | Rules enforced below the API: inactive mechanics in `full_clean()`, office read-only in the admin |
-| `test_settings` | The server refuses to start in production mode with the public default secret key |
+| `test_settings` | The server refuses to start in production mode with the public default secret key; only `DJANGO_API_AUTH=0` switches authentication off |
 | `test_dates` | "One year before", including 29 February |
 
 The other API tests run as a logged-in user (`AuthenticatedAPITestCase` in
@@ -458,7 +469,12 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
   at this size; on PostgreSQL I would add an index on `UPPER(make)` or use `citext`.
 - **Authentication is all-or-nothing.** The challenge doesn't require authentication, so
   JWT was added as the bonus.
-  - Every endpoint requires a logged-in user and any user may do anything. There are no
+  - It is on by default (secure by default), and `DJANGO_API_AUTH=0` turns it off for
+    the whole API. The switch is checked per request by
+    `fleet.permissions.IsAuthenticatedIfRequired` rather than by choosing a permission
+    class in settings: DRF fixes the default permission classes when its views are
+    imported, so only a per-request check can be tested in both modes in one test run.
+  - With it on, every endpoint requires a logged-in user and any user may do anything. There are no
     roles: a read-only role would be the next step.
   - Refresh tokens aren't rotated or blacklisted, so logout is client-side (drop the
     tokens).
@@ -485,6 +501,7 @@ backend/
     ├── urls.py        router
     ├── exceptions.py  409 responses for protected deletes and constraint conflicts
     ├── pagination.py  page size settings
+    ├── permissions.py the DJANGO_API_AUTH switch
     ├── dates.py       "one year before"
     ├── admin.py       Django admin
     ├── management/commands/seed_fleet.py
