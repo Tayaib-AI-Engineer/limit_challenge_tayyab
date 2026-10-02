@@ -29,10 +29,10 @@ def save_only(instance, fields):
         # tests) as broken, which would block the existence check below.
         with transaction.atomic():
             instance.save(update_fields=fields)
-    except DatabaseError:
+    except DatabaseError as error:
         if type(instance)._default_manager.filter(pk=instance.pk).exists():
             raise
-        raise NotFound(f"This {instance._meta.verbose_name} no longer exists.")
+        raise NotFound(f"This {instance._meta.verbose_name} no longer exists.") from error
 
 
 class BaseModelSerializer(serializers.ModelSerializer):

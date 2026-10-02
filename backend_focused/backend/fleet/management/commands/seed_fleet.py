@@ -218,7 +218,8 @@ class FleetSeeder:
             vehicle.active = False
         # Retired vehicles may share a plate with an active one; only active plates are unique.
         self.plate_sharers = self.inactive_vehicles[: max(1, inactive_count // 4)]
-        for sharer, active_vehicle in zip(self.plate_sharers, self.regular_vehicles):
+        # strict=False: there are fewer sharers than active vehicles; zip stops at the shorter.
+        for sharer, active_vehicle in zip(self.plate_sharers, self.regular_vehicles, strict=False):
             sharer.license_plate = active_vehicle.license_plate
 
         Vehicle.objects.bulk_create(self.vehicles, batch_size=BATCH_SIZE)

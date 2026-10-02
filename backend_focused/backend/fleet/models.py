@@ -278,4 +278,4 @@ class MaintenanceRecord(models.Model):
         try:
             validate_mechanic_assignment(self.mechanic, previous_mechanic_id)
         except ValidationError as error:
-            raise ValidationError({"mechanic": error.messages})
+            raise ValidationError({"mechanic": error.messages}) from error
