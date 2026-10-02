@@ -12,6 +12,7 @@ from datetime import timedelta
 from decimal import Decimal
 from string import ascii_uppercase
 
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
@@ -52,6 +53,10 @@ LONG_HISTORY_RECORDS = 500
 OVERDUE_AFTER_DAYS = 365
 BATCH_SIZE = 1000  # SQLite caps it lower by itself (999 parameters per statement).
 
+# Local development only: printed by the command and documented in the README.
+DEMO_USERNAME = "demo"
+DEMO_PASSWORD = "demo-password"
+
 
 class Command(BaseCommand):
     help = "Fill the database with reproducible fake offices, vehicles, mechanics and maintenance records."
@@ -87,7 +92,16 @@ class Command(BaseCommand):
                 vehicles=options["vehicles"],
                 records=options["records"],
             )
+            self.ensure_demo_user()
         self.report(seeder, options["seed"], time.monotonic() - started)
+
+    def ensure_demo_user(self):
+        """A known login for trying the API (JWT), the browsable API and the admin.
+        Re-running the command resets its password, so the documented one always works."""
+        user, _ = get_user_model().objects.get_or_create(username=DEMO_USERNAME)
+        user.is_staff = user.is_superuser = True
+        user.set_password(DEMO_PASSWORD)
+        user.save()
 
     def report(self, seeder, seed, elapsed):
         s = seeder
@@ -100,6 +114,9 @@ class Command(BaseCommand):
             f"  {len(s.vehicles)} vehicles: {len(s.inactive_vehicles)} inactive, "
             f"{len(s.plate_sharers)} of them reusing an active vehicle's plate",
             f"  {len(s.records)} maintenance records from {min(dates)} to {max(dates)}",
+            "",
+            f"Log in as {DEMO_USERNAME} / {DEMO_PASSWORD}: get an API token from POST /api/auth/token/,",
+            "or use the same login for /admin/ and the browsable API.",
             "",
             "Worth a look:",
             f"  Long history ({s.long_history_count} records):   /api/vehicles/{s.long_history.pk}/  "

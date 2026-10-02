@@ -1,10 +1,13 @@
 # Fleet Maintenance API: backend
 
 Django 5.2 + Django REST Framework 3.17 API for offices, vehicles, mechanics and
-maintenance records. Data is stored in SQLite (`backend/db.sqlite3`).
+maintenance records. Data is stored in SQLite (`backend/db.sqlite3`). Endpoints require a
+JWT (the challenge's optional bonus); the sample data includes the login `demo` /
+`demo-password`.
 
 **Contents:** [Run with Docker](#run-with-docker-recommended) ·
-[Run without Docker](#run-without-docker) · [API](#api) · [Errors](#errors) ·
+[Run without Docker](#run-without-docker) · [Authentication](#authentication) ·
+[API](#api) · [Errors](#errors) ·
 [Tests](#tests) · [Design notes](#design-notes) · [Assumptions](#assumptions) ·
 [Tradeoffs and next steps](#tradeoffs-and-next-steps) · [Project layout](#project-layout) ·
 [Troubleshooting](#troubleshooting)
@@ -22,10 +25,11 @@ On startup the container applies migrations, then runs the Django dev server.
 
 | URL | What it is |
 |---|---|
-| http://localhost:8000/api/ | API root (browsable in a browser, JSON for API clients) |
-| http://localhost:8000/api/docs/ | Swagger UI, where you can try every endpoint |
-| http://localhost:8000/api/schema/ | OpenAPI 3 schema |
-| http://localhost:8000/admin/ | Django admin (create a user first, see below) |
+| http://localhost:8000/api/docs/ | Swagger UI, where you can try every endpoint (public) |
+| http://localhost:8000/api/schema/ | OpenAPI 3 schema (public) |
+| http://localhost:8000/api/auth/token/ | Exchange a username and password for a JWT (public) |
+| http://localhost:8000/api/ | API root (browsable in a browser after logging in, JSON for API clients) |
+| http://localhost:8000/admin/ | Django admin |
 
 The `backend/` folder is mounted into the container, so code edits reload the server
 automatically and the database file is the same one a local virtualenv run would use.
@@ -49,6 +53,10 @@ data includes a case for each endpoint:
 - inactive vehicles reusing an active vehicle's license plate
 - inactive mechanics, and active mechanics with no work this year
 - one vehicle with 500 maintenance records
+
+It also creates (or resets the password of) the superuser **`demo` / `demo-password`**,
+for API tokens, the browsable API and the admin. These credentials are for local
+development only.
 
 The same `--seed` on the same day always produces the same data. The command refuses to
 run on a database that already has fleet data unless you pass `--clear`.
@@ -102,16 +110,46 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py seed_fleet        # optional sample data
+python manage.py seed_fleet        # sample data and the demo login
 python manage.py runserver 0.0.0.0:8000
 ```
 
 Run the tests with `python manage.py test`.
 
+## Authentication
+
+Every endpoint requires an authenticated user, except token issuing, the API docs and
+the schema. Run `seed_fleet` for the `demo` login, or create your own with
+`createsuperuser`.
+
+**In Swagger** (http://localhost:8000/api/docs/):
+1. Call `POST /api/auth/token/` with `{"username": "demo", "password": "demo-password"}`.
+2. Click **Authorize** and paste the `access` value.
+
+The token is kept across page reloads.
+
+**With curl:**
+
+```bash
+ACCESS=$(curl -s -X POST http://localhost:8000/api/auth/token/ \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "demo", "password": "demo-password"}' | python3 -c 'import sys, json; print(json.load(sys.stdin)["access"])')
+
+curl -H "Authorization: Bearer $ACCESS" http://localhost:8000/api/offices/summary/
+```
+
+| Endpoint | Body | Returns |
+|---|---|---|
+| `POST /api/auth/token/` | `{"username", "password"}` | `{"access", "refresh"}` |
+| `POST /api/auth/token/refresh/` | `{"refresh"}` | `{"access"}` |
+
+- **Lifetimes:** access tokens last 1 hour; refresh tokens last 1 day.
+- **Browsable API:** use the **Log in** link (session login with the same credentials).
+
 ## API
 
-Every endpoint is under `/api/` and is documented, with a "Try it out" button, at
-http://localhost:8000/api/docs/.
+Every endpoint is under `/api/`, requires a token (see [Authentication](#authentication))
+and is documented, with a "Try it out" button, at http://localhost:8000/api/docs/.
 
 | Method | Path | What it does |
 |---|---|---|
@@ -180,6 +218,7 @@ Example responses (from the sample data):
 | Status | When | Body |
 |---|---|---|
 | 400 | Invalid input, including uniqueness conflicts and bad search parameters | Messages per field: `{"vin": ["A vehicle with this VIN already exists."]}` |
+| 401 | Missing, invalid or expired token, or a wrong password at `/api/auth/token/` | `{"detail": ...}` with a `WWW-Authenticate: Bearer` header |
 | 404 | Unknown ID in the URL | `{"detail": "No Vehicle matches the given query."}` |
 | 405 | Method not supported, e.g. GET on `assign-office` | `{"detail": ...}` |
 | 409 | Deleting something other records depend on: an office with vehicles, a vehicle or mechanic with maintenance records | `{"detail": "...", "blocking_objects": {"vehicles": 191}}` |
@@ -205,7 +244,7 @@ Validation rules:
 ## Tests
 
 ```bash
-docker compose exec backend python manage.py test                                  # all 68 tests, ~1.5 s
+docker compose exec backend python manage.py test                                  # all 76 tests, ~1.5 s
 docker compose exec backend python manage.py test fleet.tests.test_vehicle_search_api  # one module
 ```
 
@@ -221,7 +260,11 @@ Tests use an in-memory SQLite database and never touch `db.sqlite3`.
 | `test_vehicle_actions_api` | Vehicle detail, maintenance history, assign-office, duplicate check |
 | `test_vehicle_search_api` | Every search parameter, and the "same maintenance record" rule |
 | `test_seed_command` | Seed sizes, planted scenarios, model validity of generated data, reproducibility |
+| `test_auth_api` | 401 without a token, token issuing and refresh, invalid tokens, public docs, session login |
 | `test_dates` | "One year before", including 29 February |
+
+The other API tests run as a logged-in user (`AuthenticatedAPITestCase` in
+`tests/helpers.py`), so they test the endpoints rather than authentication.
 
 Two techniques worth knowing when reading them:
 
@@ -331,8 +374,13 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
   custom `filter_queryset`.
 - **Case-insensitive `make`/`model` matching** can't use an index on SQLite. That is fine
   at this size; on PostgreSQL I would add an index on `UPPER(make)` or use `citext`.
-- **No authentication.** The challenge says none is needed, and CORS allows every origin
-  for local development. JWT via `djangorestframework-simplejwt` would be the next step.
+- **Authentication is all-or-nothing.** The challenge doesn't require authentication, so
+  JWT was added as the bonus.
+  - Every endpoint requires a logged-in user and any user may do anything. There are no
+    roles: a read-only role would be the next step.
+  - Refresh tokens aren't rotated or blacklisted, so logout is client-side (drop the
+    tokens).
+  - CORS allows every origin for local development.
 - **The Docker image runs Django's development server.** A deployment would use gunicorn
   with PostgreSQL, `DJANGO_DEBUG=0` and an explicit `CORS_ALLOWED_ORIGINS`.
 - **Next steps.**
@@ -344,7 +392,7 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
 
 ```
 backend/
-├── server/            settings, root URLs (admin, /api/, schema, docs)
+├── server/            settings, root URLs (admin, /api/, token endpoints, schema, docs)
 └── fleet/
     ├── models.py      models, constraints, indexes and the QuerySet methods behind every report
     ├── validators.py  VIN, plate, model year and maintenance date rules

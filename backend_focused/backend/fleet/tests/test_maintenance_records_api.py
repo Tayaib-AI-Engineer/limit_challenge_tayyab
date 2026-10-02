@@ -3,12 +3,11 @@ from datetime import timedelta
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.test import APITestCase
 
-from .helpers import make_mechanic, make_record, make_vehicle
+from .helpers import AuthenticatedAPITestCase, make_mechanic, make_record, make_vehicle
 
 
-class MaintenanceRecordValidationTests(APITestCase):
+class MaintenanceRecordValidationTests(AuthenticatedAPITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.today = timezone.localdate()
@@ -84,7 +83,7 @@ class MaintenanceRecordValidationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
-class MaintenanceRecordListTests(APITestCase):
+class MaintenanceRecordListTests(AuthenticatedAPITestCase):
     def test_list_is_newest_first_and_query_count_is_constant(self):
         today = timezone.localdate()
         vehicle = make_vehicle()

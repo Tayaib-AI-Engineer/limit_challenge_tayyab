@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -134,6 +135,17 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
+    # Secure by default: every endpoint needs a user, except those that opt out (token
+    # issuing; the schema and docs via SPECTACULAR_SETTINGS['SERVE_PERMISSIONS']).
+    # JWTAuthentication comes first so anonymous requests get 401 with
+    # `WWW-Authenticate: Bearer`; sessions keep the browsable API usable after login.
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
     # Lives in fleet/pagination.py, not fleet/views.py: referencing a class in a
     # module that itself reads api_settings at import time is a circular import.
     'DEFAULT_PAGINATION_CLASS': 'fleet.pagination.StandardPagination',
@@ -157,11 +169,23 @@ REST_FRAMEWORK = {
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
 }
 
+SIMPLE_JWT = {
+    # Long enough for a manual testing session; the refresh token renews it.
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+}
+
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Fleet Maintenance API',
-    'DESCRIPTION': 'Offices, vehicles, mechanics and maintenance records.',
+    'DESCRIPTION': (
+        'Offices, vehicles, mechanics and maintenance records.\n\n'
+        'Get a token from `POST /api/auth/token/`, then click **Authorize** and paste the '
+        '`access` value. `python manage.py seed_fleet` creates the user `demo` / `demo-password`.'
+    ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    # Keep the pasted token across page reloads.
+    'SWAGGER_UI_SETTINGS': {'deepLinking': True, 'persistAuthorization': True},
 }
 
 # Development convenience. In production, list origins explicitly with

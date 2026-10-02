@@ -1,16 +1,15 @@
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.test import APITestCase
 
 from fleet.models import Vehicle
 
-from .helpers import make_office, make_record, make_vehicle
+from .helpers import AuthenticatedAPITestCase, make_office, make_record, make_vehicle
 
 PLATE_TAKEN = ["Another active vehicle already uses this license plate."]
 
 
-class VehicleValidationTests(APITestCase):
+class VehicleValidationTests(AuthenticatedAPITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.office = make_office()
@@ -111,7 +110,7 @@ class VehicleValidationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
-class VehicleDeleteTests(APITestCase):
+class VehicleDeleteTests(AuthenticatedAPITestCase):
     def test_vehicle_with_maintenance_history_cannot_be_deleted(self):
         record = make_record()
 
@@ -129,7 +128,7 @@ class VehicleDeleteTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
 
-class VehicleListTests(APITestCase):
+class VehicleListTests(AuthenticatedAPITestCase):
     def test_list_query_count_does_not_grow_with_rows(self):
         for _ in range(5):
             make_vehicle()  # each in its own office

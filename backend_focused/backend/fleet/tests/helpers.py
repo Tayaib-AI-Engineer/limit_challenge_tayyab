@@ -4,11 +4,27 @@ so tests only spell out the fields they are actually about."""
 import itertools
 from decimal import Decimal
 
+from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.utils import timezone
+from rest_framework.test import APITestCase
 
 from fleet.models import MaintenanceRecord, Mechanic, Office, Vehicle
 
 _sequence = itertools.count(1)
+
+# Real password hashing is deliberately slow; tests that set passwords don't need that.
+fast_password_hashing = override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
+
+
+class AuthenticatedAPITestCase(APITestCase):
+    """Every endpoint requires a user, so API tests run logged in. force_authenticate
+    attaches the user without a database lookup, which keeps assertNumQueries counts
+    about the endpoint itself. Authentication is tested in test_auth_api."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(get_user_model().objects.create_user(username="api-tester"))
 
 
 def make_office(**fields):

@@ -12,11 +12,10 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.test import APITestCase
 
 from fleet.models import Mechanic, Office, Vehicle
 
-from .helpers import make_mechanic, make_office, make_record, make_vehicle
+from .helpers import AuthenticatedAPITestCase, make_mechanic, make_office, make_record, make_vehicle
 
 TODAY = date(2026, 6, 15)
 WINDOW_START = date(2025, 6, 15)  # one_year_before(TODAY)
@@ -62,7 +61,7 @@ class OfficeSummaryQueryTests(TestCase):
         self.assertIsNone(summary.last_maintenance)
 
 
-class OfficeSummaryApiTests(APITestCase):
+class OfficeSummaryApiTests(AuthenticatedAPITestCase):
     def test_returns_every_office_as_a_plain_list_in_one_query(self):
         today = timezone.localdate()
         alpha = make_office(name="Alpha")
@@ -131,7 +130,7 @@ class NeedingMaintenanceQueryTests(TestCase):
         self.assertEqual(result[2].last_maintenance, TODAY - timedelta(days=500))
 
 
-class NeedingMaintenanceApiTests(APITestCase):
+class NeedingMaintenanceApiTests(AuthenticatedAPITestCase):
     def test_paginated_with_days_since_last_maintenance(self):
         today = timezone.localdate()
         never_serviced = make_vehicle()
@@ -184,7 +183,7 @@ class MechanicWorkloadQueryTests(TestCase):
         self.assertEqual((idle.maintenance_count, idle.total_cost), (0, Decimal("0")))
 
 
-class MechanicWorkloadApiTests(APITestCase):
+class MechanicWorkloadApiTests(AuthenticatedAPITestCase):
     def test_plain_list_in_one_query_filterable_by_active(self):
         make_mechanic(name="Active")
         make_mechanic(name="Inactive", active=False)

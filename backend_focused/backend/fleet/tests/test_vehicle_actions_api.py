@@ -5,12 +5,11 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.test import APITestCase
 
-from .helpers import make_office, make_record, make_vehicle
+from .helpers import AuthenticatedAPITestCase, make_office, make_record, make_vehicle
 
 
-class VehicleDetailApiTests(APITestCase):
+class VehicleDetailApiTests(AuthenticatedAPITestCase):
     def test_includes_office_and_full_history_with_mechanics_newest_first(self):
         today = timezone.localdate()
         vehicle = make_vehicle()
@@ -44,7 +43,7 @@ class VehicleDetailApiTests(APITestCase):
                 self.assertEqual(len(response.data["maintenance_records"]), record_count)
 
 
-class MaintenanceHistoryApiTests(APITestCase):
+class MaintenanceHistoryApiTests(AuthenticatedAPITestCase):
     def test_newest_first_paginated_and_limited_to_the_vehicle(self):
         today = timezone.localdate()
         vehicle = make_vehicle()
@@ -68,7 +67,7 @@ class MaintenanceHistoryApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
-class AssignOfficeApiTests(APITestCase):
+class AssignOfficeApiTests(AuthenticatedAPITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.office = make_office()
@@ -118,7 +117,7 @@ class AssignOfficeApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
 
-class DuplicateCheckApiTests(APITestCase):
+class DuplicateCheckApiTests(AuthenticatedAPITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.vehicle = make_vehicle(license_plate="DUP-001")

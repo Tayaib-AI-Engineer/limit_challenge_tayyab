@@ -1,16 +1,21 @@
 from datetime import timedelta
 from io import StringIO
 
+from django.contrib.auth import authenticate
 from django.core.management import CommandError, call_command
 from django.db.models import Count
 from django.test import TestCase
 from django.utils import timezone
 
+from fleet.management.commands.seed_fleet import DEMO_PASSWORD, DEMO_USERNAME
 from fleet.models import MaintenanceRecord, Mechanic, Office, Vehicle
+
+from .helpers import fast_password_hashing
 
 SMALL = {"offices": 4, "mechanics": 8, "vehicles": 40, "records": 400, "seed": 7}
 
 
+@fast_password_hashing
 class SeedFleetCommandTests(TestCase):
     def seed(self, **overrides):
         out = StringIO()
@@ -65,6 +70,18 @@ class SeedFleetCommandTests(TestCase):
         self.seed(clear=True)
 
         self.assertEqual(self.snapshot(), first)
+
+    def test_creates_a_demo_login_and_resets_its_password_on_rerun(self):
+        self.seed()
+        user = authenticate(username=DEMO_USERNAME, password=DEMO_PASSWORD)
+        self.assertIsNotNone(user)
+        self.assertTrue(user.is_superuser)
+
+        user.set_password("changed")
+        user.save()
+        self.seed(clear=True)
+
+        self.assertIsNotNone(authenticate(username=DEMO_USERNAME, password=DEMO_PASSWORD))
 
     def test_refuses_to_overwrite_existing_data_without_clear(self):
         self.seed()

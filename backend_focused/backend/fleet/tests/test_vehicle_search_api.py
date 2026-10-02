@@ -2,12 +2,11 @@ from datetime import date
 
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
 
-from .helpers import make_mechanic, make_office, make_record, make_vehicle
+from .helpers import AuthenticatedAPITestCase, make_mechanic, make_office, make_record, make_vehicle
 
 
-class VehicleSearchApiTests(APITestCase):
+class VehicleSearchApiTests(AuthenticatedAPITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.office_a = make_office()

@@ -1,13 +1,12 @@
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
 
 from fleet.models import Mechanic, Office
 
-from .helpers import make_mechanic, make_office, make_record, make_vehicle
+from .helpers import AuthenticatedAPITestCase, make_mechanic, make_office, make_record, make_vehicle
 
 
-class OfficeApiTests(APITestCase):
+class OfficeApiTests(AuthenticatedAPITestCase):
     def test_office_with_vehicles_cannot_be_deleted(self):
         office = make_office()
         make_vehicle(office)
@@ -46,7 +45,7 @@ class OfficeApiTests(APITestCase):
         self.assertEqual(response["Content-Type"], "application/json")
 
 
-class MechanicApiTests(APITestCase):
+class MechanicApiTests(AuthenticatedAPITestCase):
     def test_certification_number_is_normalised_and_unique(self):
         created = self.client.post(reverse("mechanic-list"), {"name": "Ann", "certification_number": " ase-777 "})
         duplicate = self.client.post(reverse("mechanic-list"), {"name": "Bob", "certification_number": "ASE-777"})
