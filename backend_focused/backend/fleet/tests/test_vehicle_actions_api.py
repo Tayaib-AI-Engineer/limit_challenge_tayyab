@@ -42,6 +42,11 @@ class VehicleDetailApiTests(AuthenticatedAPITestCase):
 
                 self.assertEqual(len(response.data["maintenance_records"]), record_count)
 
+    def test_unknown_vehicle_returns_404(self):
+        response = self.client.get(reverse("vehicle-detail", args=[999_999]))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
 
 class MaintenanceHistoryApiTests(AuthenticatedAPITestCase):
     def test_newest_first_paginated_and_limited_to_the_vehicle(self):
@@ -149,8 +154,21 @@ class DuplicateCheckApiTests(AuthenticatedAPITestCase):
 
         self.assertEqual(response.data, {"conflicts": []})
 
+    def test_inactive_vehicle_is_only_checked_for_its_vin(self):
+        # Mirrors create: an inactive vehicle may reuse an active vehicle's plate.
+        plate_only = self.check(license_plate="DUP-001", active="false")
+        vin_and_plate = self.check(vin=self.vehicle.vin, license_plate="DUP-001", active="false")
+
+        self.assertEqual(plate_only.data, {"conflicts": []})
+        self.assertEqual(vin_and_plate.data, {"conflicts": ["vin"]})
+
     def test_invalid_parameters_are_rejected(self):
-        for params in ({}, {"vin": "", "license_plate": ""}, {"vin": "X", "exclude_id": "abc"}):
+        for params in (
+            {},
+            {"vin": "", "license_plate": ""},
+            {"vin": "X", "exclude_id": "abc"},
+            {"vin": "X", "active": "maybe"},
+        ):
             with self.subTest(params=params):
                 response = self.check(**params)
                 self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

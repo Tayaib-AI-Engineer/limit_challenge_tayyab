@@ -48,6 +48,8 @@ class VehicleSearchApiTests(AuthenticatedAPITestCase):
             ({"make": "ford"}, [self.ford, self.retired]),  # case-insensitive
             ({"model": "HILUX"}, [self.toyota]),
             ({"make": "Ford", "active": "true"}, [self.ford]),
+            ({"active": "FALSE"}, [self.retired]),
+            ({"active": "0"}, [self.retired]),
         ]
         for params, expected in cases:
             with self.subTest(params=params):
@@ -100,6 +102,11 @@ class VehicleSearchApiTests(AuthenticatedAPITestCase):
             ("maintenance_from", {"maintenance_from": "not-a-date"}),
             ("maintenance_to", {"maintenance_from": "2026-03-31", "maintenance_to": "2026-03-01"}),
             ("office", {"office": 999_999}),
+            # Unrecognised booleans used to be ignored, returning every vehicle.
+            ("active", {"active": "maybe"}),
+            # Oversized text used to reach SQLite's LIKE limit as a 500.
+            ("make", {"make": "a" * 50_001}),
+            ("mechanic_certification", {"mechanic_certification": "A" * 31}),
         ]
         for field, params in cases:
             with self.subTest(params=params):

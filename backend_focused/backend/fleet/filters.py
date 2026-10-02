@@ -1,7 +1,38 @@
 from django import forms
 from django_filters import rest_framework as filters
 
-from .models import MaintenanceRecord, Office, Vehicle
+from .models import MaintenanceRecord, Mechanic, Office, Vehicle, normalize_identifier
+
+
+class StrictBooleanField(forms.NullBooleanField):
+    def to_python(self, value):
+        if value in (None, ""):
+            return None
+        normalized = str(value).strip().lower()
+        if normalized in ("true", "1"):
+            return True
+        if normalized in ("false", "0"):
+            return False
+        raise forms.ValidationError("Must be true or false.", code="invalid")
+
+
+class StrictBooleanFilter(filters.BooleanFilter):
+    """django-filter's BooleanFilter maps anything it doesn't recognise to "no filter",
+    so ?active=maybe would silently return everything. This one answers 400 instead."""
+
+    field_class = StrictBooleanField
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("widget", forms.TextInput)  # pass the raw value to the field
+        super().__init__(*args, **kwargs)
+
+
+class MechanicFilter(filters.FilterSet):
+    active = StrictBooleanFilter()
+
+    class Meta:
+        model = Mechanic
+        fields = ["active"]
 
 
 class VehicleFilterForm(forms.Form):
@@ -27,9 +58,11 @@ class VehicleFilter(filters.FilterSet):
     """
 
     office = filters.ModelChoiceFilter(queryset=Office.objects.all(), help_text="Office ID.")
-    active = filters.BooleanFilter()
-    make = filters.CharFilter(lookup_expr="iexact", help_text="Exact make, case-insensitive.")
-    model = filters.CharFilter(lookup_expr="iexact", help_text="Exact model, case-insensitive.")
+    active = StrictBooleanFilter()
+    # max_length matches the model fields; it also keeps oversized input away from
+    # SQLite, which rejects LIKE patterns over 50,000 bytes with a 500.
+    make = filters.CharFilter(lookup_expr="iexact", max_length=50, help_text="Exact make, case-insensitive.")
+    model = filters.CharFilter(lookup_expr="iexact", max_length=50, help_text="Exact model, case-insensitive.")
     maintenance_from = filters.DateFilter(
         method="apply_with_other_maintenance_filters",
         help_text="Serviced on or after this date (YYYY-MM-DD).",
@@ -40,6 +73,7 @@ class VehicleFilter(filters.FilterSet):
     )
     mechanic_certification = filters.CharFilter(
         method="apply_with_other_maintenance_filters",
+        max_length=30,
         help_text="Serviced by the mechanic with this certification number.",
     )
 
@@ -69,7 +103,7 @@ class VehicleFilter(filters.FilterSet):
             value = self.form.cleaned_data.get(name)
             if value in (None, ""):
                 continue
-            record_conditions[lookup] = value.upper() if name == "mechanic_certification" else value
+            record_conditions[lookup] = normalize_identifier(value) if name == "mechanic_certification" else value
 
         if record_conditions:
             # An uncorrelated IN (subquery): no duplicate vehicles and no DISTINCT

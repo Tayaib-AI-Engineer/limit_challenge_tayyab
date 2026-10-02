@@ -198,3 +198,6 @@ class MechanicWorkloadApiTests(AuthenticatedAPITestCase):
 
         response = self.client.get(reverse("mechanic-workload"), {"active": "true"})
         self.assertEqual([row["name"] for row in response.json()], ["Active"])
+
+        response = self.client.get(reverse("mechanic-workload"), {"active": "maybe"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

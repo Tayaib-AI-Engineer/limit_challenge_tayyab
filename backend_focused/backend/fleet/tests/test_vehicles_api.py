@@ -1,8 +1,12 @@
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 
 from fleet.models import Vehicle
+from fleet.serializers import VehicleSerializer
 
 from .helpers import AuthenticatedAPITestCase, make_office, make_record, make_vehicle
 
@@ -108,6 +112,78 @@ class VehicleValidationTests(AuthenticatedAPITestCase):
         response = self.client.patch(self.detail_url(self.active), {"office": self.office.pk, "make": "GMC"})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_put_may_leave_out_the_office(self):
+        payload = self.payload(vin=self.active.vin, license_plate=self.active.license_plate)
+        del payload["office"]
+
+        response = self.client.put(self.detail_url(self.active), payload)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["office"], self.office.pk)
+
+    def test_plate_spacing_variants_are_the_same_plate_or_invalid(self):
+        make_vehicle(self.office, license_plate="KLM 123")
+
+        extra_spaces = self.client.post(reverse("vehicle-list"), self.payload(license_plate=" klm   123 "))
+        spaced_hyphen = self.client.post(reverse("vehicle-list"), self.payload(license_plate="KLM - 123"))
+
+        self.assertEqual(extra_spaces.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(extra_spaces.data["license_plate"], PLATE_TAKEN)
+        self.assertEqual(spaced_hyphen.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertNotEqual(spaced_hyphen.data["license_plate"], PLATE_TAKEN)  # a format error
+
+    def test_detail_routes_ignore_list_filters(self):
+        vehicle = make_vehicle(self.office)  # active, no maintenance history
+        url = self.detail_url(vehicle)
+
+        self.assertEqual(self.client.get(url, {"active": "false"}).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.patch(f"{url}?make=nomatch", {"model": "X5"}).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.delete(f"{url}?office=999999").status_code, status.HTTP_204_NO_CONTENT)
+
+
+class VehicleUpdateWriteTests(AuthenticatedAPITestCase):
+    """An update writes only the columns it was given."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.office = make_office()
+        cls.other_office = make_office()
+
+    def test_patch_updates_only_the_submitted_column(self):
+        vehicle = make_vehicle(self.office)
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.patch(reverse("vehicle-detail", args=[vehicle.pk]), {"make": "Volvo"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        updates = [query["sql"] for query in queries if query["sql"].startswith("UPDATE")]
+        self.assertEqual(len(updates), 1)
+        self.assertRegex(updates[0], r'^UPDATE "fleet_vehicle" SET "make" = \S+ WHERE')
+
+    def test_update_does_not_revert_a_concurrent_office_move(self):
+        vehicle = make_vehicle(self.office)
+        stale = Vehicle.objects.get(pk=vehicle.pk)  # request A reads the vehicle
+        Vehicle.objects.filter(pk=vehicle.pk).update(office=self.other_office)  # request B moves it
+
+        serializer = VehicleSerializer(stale, data={"make": "Volvo"}, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()  # request A saves its edit
+
+        vehicle.refresh_from_db()
+        self.assertEqual((vehicle.make, vehicle.office), ("Volvo", self.other_office))
+
+    def test_update_of_a_vehicle_deleted_meanwhile_is_404_not_a_resurrection(self):
+        vehicle = make_vehicle(self.office)
+        stale = Vehicle.objects.get(pk=vehicle.pk)
+        Vehicle.objects.filter(pk=vehicle.pk).delete()
+
+        serializer = VehicleSerializer(stale, data={"make": "Volvo"}, partial=True)
+        serializer.is_valid(raise_exception=True)
+        with self.assertRaises(NotFound):
+            serializer.save()
+
+        self.assertFalse(Vehicle.objects.filter(pk=vehicle.pk).exists())
 
 
 class VehicleDeleteTests(AuthenticatedAPITestCase):

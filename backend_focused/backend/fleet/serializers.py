@@ -1,17 +1,38 @@
+from django.db import DatabaseError, transaction
 from rest_framework import serializers
+from rest_framework.exceptions import NotFound
 
 from . import models
-from .models import MaintenanceRecord, Mechanic, Office, Vehicle
-from .validators import validate_license_plate
+from .models import MaintenanceRecord, Mechanic, Office, Vehicle, normalize_identifier
+from .validators import validate_license_plate, validate_mechanic_assignment
 
 
 class UpperCaseCharField(serializers.CharField):
-    """Upper-cases identifiers in to_internal_value(), which DRF runs *before* field
-    validators. Normalising later (in validate_<field>) would let "abc123" slip past
-    the UniqueValidator and hit the database constraint as a 500."""
+    """Normalises identifiers in to_internal_value(), which DRF runs *before* field
+    validators. The format regexes (e.g. no lowercase in a VIN) then judge the stored
+    form, and responses echo exactly what was saved. (Database lookups are normalised
+    by the model field itself.)"""
 
     def to_internal_value(self, data):
-        return super().to_internal_value(data).upper()
+        return normalize_identifier(super().to_internal_value(data))
+
+
+def save_only(instance, fields):
+    """save(update_fields=fields): UPDATE just these columns, so a request can't silently
+    revert columns that another request changed after this one read the row.
+
+    Django raises DatabaseError when the row has been deleted in the meantime (where a
+    plain save() would quietly re-INSERT it); that case becomes a 404.
+    """
+    try:
+        # Own savepoint: a failed save marks an enclosing transaction (ATOMIC_REQUESTS,
+        # tests) as broken, which would block the existence check below.
+        with transaction.atomic():
+            instance.save(update_fields=fields)
+    except DatabaseError:
+        if type(instance)._default_manager.filter(pk=instance.pk).exists():
+            raise
+        raise NotFound(f"This {instance._meta.verbose_name} no longer exists.")
 
 
 class BaseModelSerializer(serializers.ModelSerializer):
@@ -56,6 +77,13 @@ class VehicleSerializer(BaseModelSerializer):
             "license_plate": {"validators": [validate_license_plate]},
         }
 
+    def get_extra_kwargs(self):
+        extra_kwargs = super().get_extra_kwargs()
+        if self.instance is not None:
+            # The office can't change on update (see validate()), so a PUT needn't send it.
+            extra_kwargs["office"] = {**extra_kwargs.get("office", {}), "required": False}
+        return extra_kwargs
+
     def validate(self, attrs):
         instance = self.instance
 
@@ -76,6 +104,15 @@ class VehicleSerializer(BaseModelSerializer):
                 {"license_plate": "Another active vehicle already uses this license plate."}
             )
         return attrs
+
+    def update(self, instance, validated_data):
+        # ModelSerializer.update() would call a plain save(), writing every column with
+        # the values read at the start of this request; a PATCH {"make": ...} could then
+        # undo a concurrent assign-office or deactivation.
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        save_only(instance, list(validated_data))
+        return instance
 
 
 class VehicleMaintenanceDueSerializer(VehicleSerializer):
@@ -105,6 +142,13 @@ class DuplicateCheckQuerySerializer(serializers.Serializer):
     license_plate = UpperCaseCharField(required=False, allow_blank=True)
     exclude_id = serializers.IntegerField(
         required=False, min_value=1, help_text="ID of the vehicle being edited, so it doesn't conflict with itself."
+    )
+    active = serializers.BooleanField(
+        default=True,
+        help_text=(
+            "Whether the vehicle being checked is (or will be) active. Plates only clash "
+            "between active vehicles, so with false only the VIN is checked."
+        ),
     )
 
     def validate(self, attrs):
@@ -174,9 +218,7 @@ class MaintenanceRecordSerializer(BaseModelSerializer):
         ]
 
     def validate_mechanic(self, mechanic):
-        # Only checked when the mechanic is being set or changed, so historical records
-        # stay editable after their mechanic is deactivated.
-        is_changing = self.instance is None or self.instance.mechanic_id != mechanic.pk
-        if is_changing and not mechanic.active:
-            raise serializers.ValidationError("Inactive mechanics can't be assigned to maintenance records.")
+        # Same rule as MaintenanceRecord.clean(); DRF turns the Django ValidationError
+        # into a field error.
+        validate_mechanic_assignment(mechanic, getattr(self.instance, "mechanic_id", None))
         return mechanic

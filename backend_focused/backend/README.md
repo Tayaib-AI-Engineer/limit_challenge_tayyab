@@ -5,12 +5,31 @@ maintenance records. Data is stored in SQLite (`backend/db.sqlite3`). Endpoints 
 JWT (the challenge's optional bonus); the sample data includes the login `demo` /
 `demo-password`.
 
-**Contents:** [Run with Docker](#run-with-docker-recommended) ·
+**Contents:** [Quick start](#quick-start) · [Run with Docker](#run-with-docker-recommended) ·
 [Run without Docker](#run-without-docker) · [Authentication](#authentication) ·
 [API](#api) · [Errors](#errors) ·
 [Tests](#tests) · [Design notes](#design-notes) · [Assumptions](#assumptions) ·
 [Tradeoffs and next steps](#tradeoffs-and-next-steps) · [Project layout](#project-layout) ·
 [Troubleshooting](#troubleshooting)
+
+## Quick start
+
+From the repository root:
+
+```bash
+cd backend_focused
+docker compose up -d --build
+# Wait until `docker compose logs backend` shows "Starting development server" (migrations run first).
+docker compose exec backend python manage.py seed_fleet    # sample data and the login demo / demo-password
+```
+
+Then, to call the API, which requires a token:
+
+1. Open http://localhost:8000/api/docs/.
+2. Run `POST /api/auth/token/` with `{"username": "demo", "password": "demo-password"}`.
+3. Click **Authorize** and paste the `access` token into the **jwtAuth** box.
+
+[Authentication](#authentication) has the details and a curl version.
 
 ## Run with Docker (recommended)
 
@@ -21,7 +40,9 @@ cd backend_focused
 docker compose up -d --build
 ```
 
-On startup the container applies migrations, then runs the Django dev server.
+On startup the container applies migrations (a few seconds), then runs the Django dev
+server. Commands that use the database, such as `seed_fleet`, need the migrations to have
+finished: `docker compose logs backend` shows `Starting development server` once they have.
 
 | URL | What it is |
 |---|---|
@@ -41,7 +62,7 @@ docker compose exec backend python manage.py seed_fleet
 ```
 
 This creates 12 offices, 40 mechanics, 2,000 vehicles and 50,000 maintenance records
-spread over the last three years, in about 4 seconds on an empty database. Replacing
+spread over the last three years, in 4–5 seconds on an empty database. Replacing
 existing data with `--clear` takes about 15 seconds under Docker Desktop, because the
 database file sits in the bind-mounted folder where disk writes are slower (natively it
 stays around 4 seconds). It finishes by printing the vehicles and URLs worth a look. The
@@ -83,26 +104,31 @@ Run these from `backend_focused/`.
 | Django shell | `docker compose exec backend python manage.py shell` |
 | Rebuild after changing `requirements.txt` | `docker compose up -d --build` |
 | Stop | `docker compose down` |
-| Reset the database | `docker compose down && rm backend/db.sqlite3 && docker compose up -d` |
+| Reset the database | `docker compose down && rm -f backend/db.sqlite3 && docker compose up -d`, then run `seed_fleet` again for sample data and the `demo` login |
 
 ### Configuration
 
-Set these under `environment:` in `docker-compose.yml`, or export them before running
-locally.
+The `DJANGO_*` variables are read by Django: set them under `environment:` in
+`docker-compose.yml`, or export them before running locally.
+
+`BACKEND_PORT` is read by Compose itself, not by the container. Set it on each command
+(`BACKEND_PORT=8001 docker compose up -d`), or put `BACKEND_PORT=8001` in a
+`backend_focused/.env` file so every `docker compose` command uses it.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `BACKEND_PORT` | `8000` | Host port (Compose only), e.g. `BACKEND_PORT=8001 docker compose up -d` |
+| `BACKEND_PORT` | `8000` | Host port the API is published on |
 | `DJANGO_DEBUG` | `1` | `0` turns debug mode off |
-| `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated host names Django will serve |
-| `DJANGO_SECRET_KEY` | development key | Set a real secret outside local development |
+| `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` (Compose adds `0.0.0.0`) | Comma-separated host names Django will serve |
+| `DJANGO_SECRET_KEY` | public development key | **Required when `DJANGO_DEBUG=0`**: the server refuses to start with the default key, because API tokens are signed with it |
 
 The frontend reads `NEXT_PUBLIC_API_BASE_URL`, which defaults to
 `http://localhost:8000/api`. Change it if you change `BACKEND_PORT`.
 
 ## Run without Docker
 
-Requires Python 3.10 or newer (developed on 3.14).
+Requires Python 3.10 or newer (developed on 3.14). Check with `python3 --version`: the
+`python3` that ships with macOS is 3.9, which is too old.
 
 ```bash
 cd backend_focused/backend
@@ -111,7 +137,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py seed_fleet        # sample data and the demo login
-python manage.py runserver 0.0.0.0:8000
+python manage.py runserver         # then open http://localhost:8000/api/docs/
 ```
 
 Run the tests with `python manage.py test`.
@@ -123,8 +149,15 @@ the schema. Run `seed_fleet` for the `demo` login, or create your own with
 `createsuperuser`.
 
 **In Swagger** (http://localhost:8000/api/docs/):
-1. Call `POST /api/auth/token/` with `{"username": "demo", "password": "demo-password"}`.
-2. Click **Authorize** and paste the `access` value.
+1. Expand `POST /api/auth/token/` and click **Try it out**.
+2. Replace the body with `{"username": "demo", "password": "demo-password"}` and click
+   **Execute**.
+3. Copy the `access` value from the response. Not `refresh`: that one is rejected as
+   "Token has wrong type".
+4. Click **Authorize** at the top of the page and paste the token into the **jwtAuth
+   (http, Bearer)** box, without a `Bearer ` prefix. Click **Authorize**, then **Close**.
+   The other box, cookieAuth, is for the browsable API's session login and can stay
+   empty.
 
 The token is kept across page reloads.
 
@@ -137,6 +170,9 @@ ACCESS=$(curl -s -X POST http://localhost:8000/api/auth/token/ \
 
 curl -H "Authorization: Bearer $ACCESS" http://localhost:8000/api/offices/summary/
 ```
+
+If the first command prints `KeyError: 'access'`, the login failed. Either `seed_fleet`
+hasn't been run yet (it creates `demo`), or the server is still starting.
 
 | Endpoint | Body | Returns |
 |---|---|---|
@@ -162,7 +198,7 @@ and is documented, with a "Try it out" button, at http://localhost:8000/api/docs
 | GET | `/api/vehicles/{id}/maintenance-history/` | The vehicle's maintenance records, newest first, paginated |
 | POST | `/api/vehicles/{id}/assign-office/` | Move the vehicle to another office: `{"office": 3}` |
 | GET | `/api/vehicles/needing-maintenance/` | Active vehicles never serviced or last serviced more than 365 days ago, oldest maintenance first |
-| GET | `/api/vehicles/duplicate-check/?vin=&license_plate=&exclude_id=` | Which of the given VIN and plate already belong to another vehicle |
+| GET | `/api/vehicles/duplicate-check/?vin=&license_plate=&exclude_id=&active=` | Which of the given VIN and plate already belong to another vehicle |
 | GET, POST | `/api/mechanics/` | List / create mechanics (`?active=true` / `false`) |
 | GET, PUT, PATCH, DELETE | `/api/mechanics/{id}/` | Read / update / delete a mechanic |
 | GET | `/api/mechanics/workload/` | Records completed and their total cost this calendar year, busiest first (`?active=true` hides inactive mechanics) |
@@ -172,19 +208,24 @@ and is documented, with a "Try it out" button, at http://localhost:8000/api/docs
 ### Vehicle search
 
 All parameters are optional and combine with AND, for example
-`/api/vehicles/?office=3&active=true&mechanic_certification=ASE-1234567&maintenance_from=2026-01-01&maintenance_to=2026-03-31`.
+`/api/vehicles/?office=<id>&active=true&mechanic_certification=ASE-2322602&maintenance_from=2026-01-01&maintenance_to=2026-03-31`.
+`ASE-2322602` is a mechanic in the sample data. Database IDs keep increasing each time you
+reseed, so take office IDs from `/api/offices/`.
 
 | Parameter | Matches |
 |---|---|
 | `office` | Office ID |
-| `active` | `true` or `false` |
+| `active` | `true` or `false` (`1` / `0` also accepted; anything else is a 400) |
 | `make`, `model` | Exact value, case-insensitive |
 | `maintenance_from`, `maintenance_to` | A maintenance record dated in this range (both inclusive, either may be used alone) |
 | `mechanic_certification` | A maintenance record by the mechanic with this certification number |
 
-The three maintenance parameters describe **one** record: "serviced by ASE-1234567 in
+The three maintenance parameters describe **one** record: "serviced by ASE-2322602 in
 March" only matches vehicles where that mechanic did work in March, not vehicles that
 mechanic serviced in January and someone else serviced in March.
+
+Filters only apply to lists. On `/{id}/` routes, query parameters are ignored, so a stray
+`?active=false` can't turn a GET, PATCH or DELETE into a 404.
 
 ### Conventions
 
@@ -193,12 +234,21 @@ mechanic serviced in January and someone else serviced in March.
   `{"count", "next", "previous", "results"}`, 20 items per page. Use `?page=` and
   `?page_size=` (up to 100). The office summary and mechanic workload cover small tables
   and return a plain array, as in the challenge's example.
-- **Ordering.** CRUD lists accept `?ordering=`, e.g. `?ordering=-year`.
+- **Ordering.** CRUD lists accept `?ordering=` (prefix `-` for descending), e.g.
+  `?ordering=-year`. Unknown fields are ignored. Allowed fields:
+  - offices: `name`, `city`
+  - vehicles: `id`, `vin`, `license_plate`, `make`, `model`, `year`
+  - mechanics: `name`, `certification_number`
+  - maintenance records: `date`, `cost`
 - **Money** is a JSON number with at most two decimals, e.g. `"maintenance_cost_last_year": 527742.99`.
-- **Identifiers** (VIN, license plate, certification number) are trimmed and upper-cased
-  on input, so `" abc-123 "` is stored and matched as `"ABC-123"`.
+- **Identifiers** (VIN, license plate, certification number) are trimmed, upper-cased and
+  have repeated spaces collapsed on input, so `" abc  123 "` is stored and matched as
+  `"ABC 123"`.
+- **Schema format.** `/api/schema/` is YAML, so a browser may download it rather than show
+  it. Add `?format=json` for JSON.
 
-Example responses (from the sample data):
+Example responses from the sample data. IDs and figures differ after a reseed or on
+another day.
 
 ```jsonc
 // GET /api/offices/summary/  (one element)
@@ -217,7 +267,7 @@ Example responses (from the sample data):
 
 | Status | When | Body |
 |---|---|---|
-| 400 | Invalid input, including uniqueness conflicts and bad search parameters | Messages per field: `{"vin": ["A vehicle with this VIN already exists."]}` |
+| 400 | Invalid input, including uniqueness conflicts and bad filter parameters (a bad date, `active=maybe`, text longer than the field) | Messages per field: `{"vin": ["A vehicle with this VIN already exists."]}` |
 | 401 | Missing, invalid or expired token, or a wrong password at `/api/auth/token/` | `{"detail": ...}` with a `WWW-Authenticate: Bearer` header |
 | 404 | Unknown ID in the URL | `{"detail": "No Vehicle matches the given query."}` |
 | 405 | Method not supported, e.g. GET on `assign-office` | `{"detail": ...}` |
@@ -229,9 +279,13 @@ Validation rules:
 - **Vehicles.**
   - The VIN is 17 characters without I, O or Q, and unique.
   - The model year is between 1981 (when 17-character VINs became standard) and next year.
-  - A license plate can't be used by two *active* vehicles. Reactivating a vehicle whose
-    plate has since been taken is rejected too.
-  - The office can't be changed through PUT/PATCH; use `assign-office`.
+  - A license plate is groups of letters and digits separated by single spaces or
+    hyphens. It can't be used by two *active* vehicles. Reactivating a vehicle whose plate
+    has since been taken is rejected too.
+  - The office can't be changed through PUT/PATCH; use `assign-office`. PUT may leave
+    `office` out.
+  - An update writes only the fields it sends, so it can't revert a concurrent change
+    to another field (for example a move by `assign-office`).
 - **Maintenance records.**
   - The date can't be in the future.
   - The cost can't be negative (zero is allowed, e.g. warranty work).
@@ -241,10 +295,13 @@ Validation rules:
 - **Mechanics.** The certification number is unique.
 - **Offices.** The name is unique.
 
+The rules live in the models and validators, so the Django admin enforces them too. That
+includes the inactive-mechanic rule, and the office being read-only on existing vehicles.
+
 ## Tests
 
 ```bash
-docker compose exec backend python manage.py test                                  # all 76 tests, ~1.5 s
+docker compose exec backend python manage.py test                                  # all 93 tests, ~3 s
 docker compose exec backend python manage.py test fleet.tests.test_vehicle_search_api  # one module
 ```
 
@@ -253,14 +310,16 @@ Tests use an in-memory SQLite database and never touch `db.sqlite3`.
 
 | Module | Covers |
 |---|---|
-| `test_vehicles_api` | Vehicle CRUD validation: normalising, unique VIN, the active-plate rule (including reactivation), office changes, delete protection |
+| `test_vehicles_api` | Vehicle validation: normalising (case, spacing), unique VIN, the active-plate rule (including reactivation), office changes, updates writing only the submitted columns (including a concurrent office move and a vehicle deleted mid-update), filters ignored on `/{id}/` routes, delete protection |
 | `test_maintenance_records_api` | Record validation: future dates, costs, types, inactive mechanics |
-| `test_offices_mechanics_api` | Office and mechanic CRUD, delete protection, JSON for axios' default `Accept` header |
+| `test_offices_mechanics_api` | Office create/update, mechanic update, strict `?active=`, delete protection, JSON for axios' default `Accept` header |
 | `test_reports` | Office summary, needing maintenance and mechanic workload, including date boundaries |
-| `test_vehicle_actions_api` | Vehicle detail, maintenance history, assign-office, duplicate check |
-| `test_vehicle_search_api` | Every search parameter, and the "same maintenance record" rule |
-| `test_seed_command` | Seed sizes, planted scenarios, model validity of generated data, reproducibility |
+| `test_vehicle_actions_api` | Vehicle detail, maintenance history, assign-office, duplicate check (including inactive vehicles) |
+| `test_vehicle_search_api` | Every search parameter, the "same maintenance record" rule, and invalid or oversized parameters |
+| `test_seed_command` | Seed sizes, planted scenarios, model validity of generated data, reproducibility, demo login |
 | `test_auth_api` | 401 without a token, token issuing and refresh, invalid tokens, public docs, session login |
+| `test_models_admin` | Rules enforced below the API: inactive mechanics in `full_clean()`, office read-only in the admin |
+| `test_settings` | The server refuses to start in production mode with the public default secret key |
 | `test_dates` | "One year before", including 29 February |
 
 The other API tests run as a logged-in user (`AuthenticatedAPITestCase` in
@@ -299,6 +358,9 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
   `FILTER`. With only one one-to-many relation there's no fan-out. Putting the date range
   in `.filter()` instead would turn it into an inner join and drop idle mechanics from
   the ranking.
+  - Cost: the date range is checked while scanning each mechanic's records, not used to
+    skip to this year's, so every record is read (about 30 ms here). See
+    [Tradeoffs](#tradeoffs-and-next-steps) for the fix at larger scale.
 - **Vehicle search** collects the maintenance parameters into a single
   `id IN (SELECT vehicle_id ...)` subquery.
   - django-filter applies each filter as its own `.filter()` call, and on a one-to-many
@@ -308,7 +370,8 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
 - **Indexes.**
   - `MaintenanceRecord(vehicle, date)` serves history ordering without a sort step,
     latest-date lookups and the recent-record checks.
-  - `MaintenanceRecord(mechanic, date)` serves the workload's date range.
+  - `MaintenanceRecord(mechanic, date)` serves per-mechanic lookups: the workload join,
+    `?mechanic=` on the records list and the delete-protection check.
   - They make Django's automatic single-column foreign key indexes redundant, so those
     are switched off.
 - **Plate uniqueness** is a partial unique index (`UNIQUE (license_plate) WHERE active`),
@@ -317,9 +380,16 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
     rejects valid inactive vehicles. It is also skipped for a PATCH that only sets
     `active: true`, so that request reaches the database and fails with a 500. It is
     replaced.
-- **Assign office** saves with `update_fields=["office"]`, so only `office_id` is written.
-  A full `save()` rewrites every column and can silently undo a concurrent change, such
-  as another request deactivating the vehicle.
+  - Identifiers are normalised in the model field, whose `to_python()` runs on every ORM
+    write and lookup, and again in the serializer field. The serializer copy means the
+    format validators judge the normalised value and responses echo what was stored.
+- **Updates write only what they change.** Vehicle PUT/PATCH and assign-office save with
+  `update_fields`, so only the submitted columns are written (`office_id` alone for
+  assign-office).
+  - A plain `save()` rewrites every column with the values read at the start of the
+    request. A PATCH of `make` could then silently undo a concurrent move or deactivation.
+  - If the row was deleted mid-request, the result is a 404 rather than the vehicle being
+    re-created.
 
 ## Assumptions
 
@@ -341,15 +411,19 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
 - **Duplicate check.**
   - The VIN is compared with all vehicles; the plate only with active vehicles, matching
     the plate rule.
-  - It always answers 200, because a conflict is the answer, not an error.
+  - Any valid request gets a 200, because a conflict is the answer, not an error. A
+    request with neither `vin` nor `license_plate`, or an invalid parameter, gets a 400.
   - `exclude_id` lets an edit form skip the vehicle being edited.
+  - `active=false` checks only the VIN, because an inactive vehicle may reuse a plate,
+    just like on create.
 - **Deleting vs deactivating.** Maintenance records are history, so a vehicle or mechanic
   with records can't be deleted; set `active` to `false` instead. The same goes for an
   office that still has vehicles.
 - **Assigning a vehicle to its current office** succeeds without changing anything, so a
   retried request doesn't fail.
-- **License plates** keep their spaces and hyphens as entered, so `ABC 123` and `ABC-123`
-  are different plates.
+- **License plates** keep a single space or hyphen between groups as entered, so `ABC 123`
+  and `ABC-123` are different plates. Repeated spaces are collapsed, so `ABC  123` is
+  `ABC 123`.
 - **VIN check digits** are not verified. They are only mandatory for North American
   vehicles.
 
@@ -362,7 +436,15 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
     included). `nulls_first` is already explicit, because PostgreSQL sorts NULLs last.
 - **Concurrent writes.** SQLite has no `SELECT ... FOR UPDATE`, so the uniqueness checks
   in serializers can race. The database constraints still hold, and the losing request
-  gets a 409.
+  gets a generic 409 rather than the usual field error.
+- **Performance at ten times the data.** A review at 20,000 vehicles and 500,000 records
+  found most endpoints unchanged (vehicle detail, history, assign-office, duplicate check).
+  The next steps would be:
+  - an index for the records list's default `-date, -id` order: page 1 took 1.2 s;
+  - putting the workload's date range into the join with `FilteredRelation`, plus `cost`
+    in the `(mechanic, date)` index: 414 ms down to about 23 ms in that review;
+  - `cost` in the `(vehicle, date)` index for the office summary;
+  - cursor pagination for deep pages of the records list.
 - **Vehicle detail returns the complete history**, as the challenge asks. For a vehicle
   with 500 records that is about 89 KB. A UI should page through
   `maintenance-history/` instead.
@@ -382,7 +464,8 @@ the queries can be tested without HTTP. Measured on the sample data (2,000 vehic
     tokens).
   - CORS allows every origin for local development.
 - **The Docker image runs Django's development server.** A deployment would use gunicorn
-  with PostgreSQL, `DJANGO_DEBUG=0` and an explicit `CORS_ALLOWED_ORIGINS`.
+  with PostgreSQL, `DJANGO_DEBUG=0`, its own `DJANGO_SECRET_KEY` (enforced) and an
+  explicit `CORS_ALLOWED_ORIGINS`.
 - **Next steps.**
   - An office-assignment history table. Office changes already go through a single
     endpoint, so it has one place to write.
@@ -395,9 +478,9 @@ backend/
 ├── server/            settings, root URLs (admin, /api/, token endpoints, schema, docs)
 └── fleet/
     ├── models.py      models, constraints, indexes and the QuerySet methods behind every report
-    ├── validators.py  VIN, plate, model year and maintenance date rules
+    ├── validators.py  VIN, plate, model year, maintenance date and inactive-mechanic rules
     ├── serializers.py request validation and response shapes
-    ├── filters.py     vehicle search
+    ├── filters.py     vehicle search, strict true/false filters
     ├── views.py       ViewSets and their custom actions
     ├── urls.py        router
     ├── exceptions.py  409 responses for protected deletes and constraint conflicts
@@ -413,8 +496,9 @@ backend/
 
 - **`Cannot connect to the Docker daemon`**: Docker Desktop isn't running. Start it and
   retry.
-- **`port is already allocated`**: something else is using port 8000. Stop it, or start
-  with `BACKEND_PORT=8001 docker compose up -d`.
+- **`port is already allocated`**: something else is using port 8000. Stop it, or use
+  another port: put `BACKEND_PORT=8001` in `backend_focused/.env` (or prefix every
+  `docker compose` command with it). Then use `localhost:8001` in the URLs.
 - **`RuntimeError ... URL doesn't end in a slash` on a POST**: every endpoint ends with
   `/`, for example `/api/vehicles/`, not `/api/vehicles`. Django can redirect a GET to the
   slashed URL, but not a POST without losing its body.

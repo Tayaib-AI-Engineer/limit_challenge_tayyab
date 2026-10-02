@@ -19,6 +19,11 @@ class VehicleAdmin(admin.ModelAdmin):
     autocomplete_fields = ["office"]
     ordering = ["vin"]
 
+    def get_readonly_fields(self, request, obj=None):
+        # Same rule as the API: an existing vehicle moves only via assign-office, so
+        # office changes keep a single write path.
+        return ["office"] if obj is not None else []
+
 
 @admin.register(Mechanic)
 class MechanicAdmin(admin.ModelAdmin):

@@ -33,6 +33,16 @@ class OfficeApiTests(AuthenticatedAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("name", response.data)
 
+    def test_office_can_be_created_and_updated(self):
+        created = self.client.post(reverse("office-list"), {"name": "North Depot", "city": "Dallas"})
+        url = reverse("office-detail", args=[created.data["id"]])
+        replaced = self.client.put(url, {"name": "North Yard", "city": "Dallas"})
+        patched = self.client.patch(url, {"city": "Fort Worth"})
+
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(replaced.status_code, status.HTTP_200_OK)
+        self.assertEqual(patched.data, {"id": created.data["id"], "name": "North Yard", "city": "Fort Worth"})
+
     def test_unknown_office_returns_404(self):
         response = self.client.get(reverse("office-detail", args=[999_999]))
 
@@ -73,3 +83,17 @@ class MechanicApiTests(AuthenticatedAPITestCase):
         response = self.client.get(reverse("mechanic-list"), {"active": "false"})
 
         self.assertEqual([row["id"] for row in response.data["results"]], [inactive.pk])
+
+    def test_unrecognised_active_value_is_rejected(self):
+        response = self.client.get(reverse("mechanic-list"), {"active": "maybe"})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("active", response.data)
+
+    def test_mechanic_can_be_updated(self):
+        mechanic = make_mechanic()
+
+        response = self.client.patch(reverse("mechanic-detail", args=[mechanic.pk]), {"active": False})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["active"])

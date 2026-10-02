@@ -14,6 +14,8 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -31,6 +33,14 @@ SECRET_KEY = os.environ.get(
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
+
+# The fallback key is public (it is in the repository), and JWTs are signed with
+# SECRET_KEY: anyone could mint a valid token. Refuse to run outside debug mode with it.
+if not DEBUG and SECRET_KEY.startswith('django-insecure'):
+    raise ImproperlyConfigured(
+        'Set DJANGO_SECRET_KEY when DJANGO_DEBUG=0: the default key is public and would '
+        'let anyone sign valid API tokens.'
+    )
 
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
@@ -135,8 +145,9 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
-    # Secure by default: every endpoint needs a user, except those that opt out (token
-    # issuing; the schema and docs via SPECTACULAR_SETTINGS['SERVE_PERMISSIONS']).
+    # Secure by default: every endpoint needs a user, except those that opt out: token
+    # issuing, and the schema and docs (drf-spectacular serves them with AllowAny unless
+    # SPECTACULAR_SETTINGS['SERVE_PERMISSIONS'] says otherwise).
     # JWTAuthentication comes first so anonymous requests get 401 with
     # `WWW-Authenticate: Bearer`; sessions keep the browsable API usable after login.
     'DEFAULT_AUTHENTICATION_CLASSES': [

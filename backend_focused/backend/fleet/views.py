@@ -5,7 +5,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .filters import VehicleFilter
+from .filters import MechanicFilter, VehicleFilter
 from .models import MaintenanceRecord, Mechanic, Office, Vehicle
 from .serializers import (
     AssignOfficeSerializer,
@@ -20,6 +20,7 @@ from .serializers import (
     VehicleHistoryRecordSerializer,
     VehicleMaintenanceDueSerializer,
     VehicleSerializer,
+    save_only,
 )
 
 # Every queryset has an explicit order_by: pagination over an unordered queryset can
@@ -27,13 +28,23 @@ from .serializers import (
 # loaded with select_related, so each list page is two queries (COUNT + page) no
 # matter how many rows it holds.
 #
-# Custom actions set filter_backends explicitly: DRF applies the view's backends inside
-# get_object() too, so stray list parameters (e.g. ?ordering=) must not affect them.
 # Reports over small tables (offices, mechanics) are returned whole, as the spec's
-# example shows; lists that grow with vehicles or records are paginated.
+# example shows; lists that grow with vehicles or records are paginated. List-level
+# custom actions set filter_backends explicitly, so they only accept the parameters
+# that make sense for them.
 
 
-class OfficeViewSet(viewsets.ModelViewSet):
+class FleetModelViewSet(viewsets.ModelViewSet):
+    def filter_queryset(self, queryset):
+        # Filters are a list concern. DRF's get_object() also runs filter_queryset(), so
+        # without this, GET /vehicles/5/?active=false would 404 and
+        # DELETE /vehicles/5/?office=999 would 400.
+        if self.detail:
+            return queryset
+        return super().filter_queryset(queryset)
+
+
+class OfficeViewSet(FleetModelViewSet):
     queryset = Office.objects.order_by("name", "id")
     serializer_class = OfficeSerializer
     ordering_fields = ["name", "city"]
@@ -45,7 +56,7 @@ class OfficeViewSet(viewsets.ModelViewSet):
         return Response(OfficeSummarySerializer(offices, many=True).data)
 
 
-class VehicleViewSet(viewsets.ModelViewSet):
+class VehicleViewSet(FleetModelViewSet):
     """Vehicle CRUD. The list endpoint is also the vehicle search: see VehicleFilter."""
 
     queryset = Vehicle.objects.select_related("office").order_by("id")
@@ -93,7 +104,7 @@ class VehicleViewSet(viewsets.ModelViewSet):
             vehicle.office = office
             # UPDATE ... SET office_id only. A plain save() rewrites every column and can
             # silently undo a concurrent change to another field (e.g. a deactivation).
-            vehicle.save(update_fields=["office"])
+            save_only(vehicle, ["office"])
 
         return Response(VehicleSerializer(vehicle, context=self.get_serializer_context()).data)
 
@@ -120,23 +131,27 @@ class VehicleViewSet(viewsets.ModelViewSet):
     def duplicate_check(self, request):
         """Which of the given VIN and license plate already belong to another vehicle.
 
-        Always 200: finding a conflict is the answer to the question, not an error. Uses
-        the same rules as create/update (plates only clash with active vehicles).
+        200 for any valid request: finding a conflict is the answer to the question, not
+        an error. Uses the same rules as create/update: the VIN clashes with any vehicle,
+        the plate only between active vehicles.
         """
-        params = DuplicateCheckQuerySerializer(data=request.query_params)
+        # A plain dict, not the QueryDict: DRF reads a missing BooleanField in form-style
+        # input as False, which would ignore active's default of true.
+        params = DuplicateCheckQuerySerializer(data=request.query_params.dict())
         params.is_valid(raise_exception=True)
+        checks = params.validated_data
         conflicts = Vehicle.objects.conflicts(
-            vin=params.validated_data.get("vin"),
-            license_plate=params.validated_data.get("license_plate"),
-            exclude_pk=params.validated_data.get("exclude_id"),
+            vin=checks.get("vin"),
+            license_plate=checks.get("license_plate") if checks["active"] else None,
+            exclude_pk=checks.get("exclude_id"),
         )
         return Response({"conflicts": conflicts})
 
 
-class MechanicViewSet(viewsets.ModelViewSet):
+class MechanicViewSet(FleetModelViewSet):
     queryset = Mechanic.objects.order_by("name", "id")
     serializer_class = MechanicSerializer
-    filterset_fields = ["active"]
+    filterset_class = MechanicFilter
     ordering_fields = ["name", "certification_number"]
 
     @extend_schema(responses=MechanicWorkloadSerializer(many=True))
@@ -148,7 +163,7 @@ class MechanicViewSet(viewsets.ModelViewSet):
         return Response(MechanicWorkloadSerializer(mechanics, many=True).data)
 
 
-class MaintenanceRecordViewSet(viewsets.ModelViewSet):
+class MaintenanceRecordViewSet(FleetModelViewSet):
     queryset = MaintenanceRecord.objects.select_related("vehicle", "mechanic").order_by("-date", "-id")
     serializer_class = MaintenanceRecordSerializer
     filterset_fields = ["vehicle", "mechanic", "maintenance_type"]

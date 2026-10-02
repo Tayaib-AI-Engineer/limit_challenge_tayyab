@@ -16,9 +16,12 @@ validate_vin = RegexValidator(
     message="Enter a valid 17-character VIN (letters I, O and Q are not used).",
 )
 
+# Groups of letters and digits separated by single spaces or hyphens. Together with
+# whitespace collapsing on input, "KLM  123" can't sit next to "KLM 123" as a different
+# active plate. "KLM 123" and "KLM-123" do stay distinct (documented tradeoff).
 validate_license_plate = RegexValidator(
-    regex=r"^[A-Z0-9][A-Z0-9 -]*$",
-    message="License plates may only contain letters, digits, spaces and hyphens.",
+    regex=r"^[A-Z0-9]+(?:[ -][A-Z0-9]+)*$",
+    message="License plates are letters and digits, optionally separated by single spaces or hyphens.",
 )
 
 # 17-character VINs became mandatory for model year 1981 (49 CFR 565), so the two
@@ -33,6 +36,16 @@ def validate_model_year(value):
             f"Model year must be between {FIRST_VIN_MODEL_YEAR} and {latest}.",
             code="invalid_model_year",
         )
+
+
+def validate_mechanic_assignment(mechanic, previous_mechanic_id=None):
+    """Inactive mechanics can't be put on a record. Only checked when the mechanic is set
+    or changed, so historical records stay editable after their mechanic leaves.
+
+    Shared by MaintenanceRecord.clean() (admin, forms) and the API serializer.
+    """
+    if mechanic.pk != previous_mechanic_id and not mechanic.active:
+        raise ValidationError("Inactive mechanics can't be assigned to maintenance records.", code="inactive_mechanic")
 
 
 def validate_not_in_future(value):

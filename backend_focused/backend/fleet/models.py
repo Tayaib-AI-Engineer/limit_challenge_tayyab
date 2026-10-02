@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Subquery, Sum, Value
@@ -9,23 +10,29 @@ from django.db.models.functions import Coalesce
 from .dates import one_year_before
 from .validators import (
     validate_license_plate,
+    validate_mechanic_assignment,
     validate_model_year,
     validate_not_in_future,
     validate_vin,
 )
 
 
-class UpperCaseCharField(models.CharField):
-    """A CharField for identifiers (VIN, plate, certification number), stored stripped
-    and upper-cased so that uniqueness can't be dodged with "abc123" vs "ABC123".
+def normalize_identifier(value):
+    """Upper-case, trim, and collapse inner whitespace: " klm  123 " -> "KLM 123"."""
+    return " ".join(value.split()).upper()
 
-    Normalising in to_python() covers model.full_clean() (admin, forms). The API
-    serializers normalise their own input before validation.
+
+class UpperCaseCharField(models.CharField):
+    """A CharField for identifiers (VIN, plate, certification number), stored normalised
+    so that uniqueness can't be dodged with "abc123" vs "ABC123" or "KLM  123".
+
+    CharField.get_prep_value() calls to_python(), so this covers every ORM write
+    (including bulk_create), every exact lookup, and model.full_clean() in the admin.
     """
 
     def to_python(self, value):
         value = super().to_python(value)
-        return value.strip().upper() if isinstance(value, str) else value
+        return normalize_identifier(value) if isinstance(value, str) else value
 
 
 class OfficeQuerySet(models.QuerySet):
@@ -244,7 +251,10 @@ class MaintenanceRecord(models.Model):
             # index backwards, no sort step), its latest maintenance date, and the
             # "any record since X" checks behind the reports.
             models.Index(fields=["vehicle", "date"], name="record_vehicle_date_idx"),
-            # Serves the per-mechanic date range in the workload report.
+            # Serves per-mechanic lookups: the workload JOIN, ?mechanic= on the records
+            # list and the delete-protection check. The workload's date range sits in
+            # the aggregate FILTER, so it is applied while scanning a mechanic's rows,
+            # not used to seek within them.
             models.Index(fields=["mechanic", "date"], name="record_mechanic_date_idx"),
         ]
         constraints = [
@@ -254,3 +264,18 @@ class MaintenanceRecord(models.Model):
 
     def __str__(self):
         return f"{self.get_maintenance_type_display()} on {self.date} for vehicle {self.vehicle_id}"
+
+    def clean(self):
+        # Model-level so the admin enforces it too; the API serializer runs the same check.
+        super().clean()
+        if self.mechanic_id is None:
+            return
+        previous_mechanic_id = (
+            None
+            if self._state.adding
+            else MaintenanceRecord.objects.filter(pk=self.pk).values_list("mechanic_id", flat=True).first()
+        )
+        try:
+            validate_mechanic_assignment(self.mechanic, previous_mechanic_id)
+        except ValidationError as error:
+            raise ValidationError({"mechanic": error.messages})
