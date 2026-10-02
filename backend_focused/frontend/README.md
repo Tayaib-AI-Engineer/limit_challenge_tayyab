@@ -4,6 +4,9 @@ Next.js 16 (App Router) + React 19 + MUI 7 + TanStack Query + axios, the stack t
 came with. It talks to the backend in [`../backend`](../backend/README.md) over its JWT-protected
 REST API.
 
+**Demo video:** https://www.loom.com/share/4cd8ab866d4941ba8b5c958376a9455e (about 1 minute,
+end to end against the real backend).
+
 ## Run it
 
 1. **Start the backend and load sample data** (this also creates the login

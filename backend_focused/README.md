@@ -2,6 +2,8 @@
 
 > **Submission:** how to run, test and use the API is in [backend/README.md](backend/README.md);
 > the web app that uses it is in [frontend/README.md](frontend/README.md).
+> **Demo video** (frontend working end-to-end with the backend):
+> https://www.loom.com/share/4cd8ab866d4941ba8b5c958376a9455e
 > The challenge brief below is unchanged.
 
 Build a REST API for managing a fleet of vehicles and their maintenance history.
