@@ -1,5 +1,7 @@
+import { AppRouterCacheProvider } from '@mui/material-nextjs/v16-appRouter';
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+
 import Providers from './providers';
 import './globals.css';
 
@@ -14,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Fleet Tracker Challenge',
-  description: 'Frontend scaffold for the take-home assignment',
+  title: { default: 'Fleet Maintenance', template: '%s · Fleet Maintenance' },
+  description: 'Offices, vehicles, mechanics and maintenance records.',
 };
 
 export default function RootLayout({
@@ -24,9 +26,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">
-        <Providers>{children}</Providers>
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body>
+        {/* Collects MUI's Emotion styles during server rendering and puts them in <head>;
+            without it the page hydrates with mismatched <style> tags. */}
+        <AppRouterCacheProvider>
+          <Providers>{children}</Providers>
+        </AppRouterCacheProvider>
       </body>
     </html>
   );

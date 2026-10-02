@@ -1,6 +1,7 @@
 # Fleet Maintenance API Take-home Challenge
 
-> **Submission:** how to run, test and use the API is in [backend/README.md](backend/README.md).
+> **Submission:** how to run, test and use the API is in [backend/README.md](backend/README.md);
+> the web app that uses it is in [frontend/README.md](frontend/README.md).
 > The challenge brief below is unchanged.
 
 Build a REST API for managing a fleet of vehicles and their maintenance history.
